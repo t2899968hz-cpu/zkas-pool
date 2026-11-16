@@ -208,10 +208,11 @@ dual-licensed as above, without any additional terms or conditions.
 ## Bad payout addresses: rejected at authorize
 
 If your miner authorizes with an address the bridge cannot decode (after trying
-the `zkas:`, `firecash:` and `kaspa:` prefixes), the authorize request fails
-with `err_malformed_wallet_address`. The worker is not credited and **no
-coinbase is mined to the pool on your behalf**. Fix the payout address in your
-miner configuration and reconnect.
+the `zkas:`, `firecash:` and `kaspa:` prefixes), the authorize request is
+rejected with an explicit `invalid wallet address` error and the connection is
+closed (the error is counted as `err_malformed_wallet_address`). The worker is
+not credited and **no coinbase is mined to the pool on your behalf**. Fix the
+payout address in your miner configuration and reconnect.
 
 The same rule applies to the optional merged-mining KAS payout in the stratum
 password: a password carrying an explicit `kaspa:`/`kaspatest:`/`kaspadev:`

@@ -13,12 +13,13 @@ backward-incompatible ways at every minor bump.
 ### Security
 
 - **Invalid payout addresses are rejected, not redirected to the pool.**
-  `mining.authorize` now fails with `err_malformed_wallet_address` when the
-  ZKas address does not decode, and fails when the stratum password carries an
-  explicit `kaspa:`-family prefix that does not decode. Placeholder passwords
-  (`x`, `*`, `d=8192`) still mean "no KAS payout". The previous behavior mined
-  the coinbase to the pool's own address, silently forfeiting the miner's
-  rewards (`bridge/src/default_client.rs`).
+  `mining.authorize` now returns an explicit `invalid wallet address` JSON-RPC
+  error and disconnects (counted as `err_malformed_wallet_address`) when the
+  ZKas address does not decode. It also rejects the request when the stratum
+  password carries an explicit `kaspa:`-family prefix that does not decode.
+  Placeholder passwords (`x`, `*`, `d=8192`) still mean "no KAS payout". The
+  previous behavior mined the coinbase to the pool's own address, silently
+  forfeiting the miner's rewards (`bridge/src/default_client.rs`).
 - **Pinned the ZKas dependency source.** All 64 `firecash/zkas-rusty` patch
   entries now use the audited commit
   `01ac1865181613073d3b4dda00534f2aeb9471be` instead of the mutable `main`

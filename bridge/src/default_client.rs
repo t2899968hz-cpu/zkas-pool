@@ -207,6 +207,19 @@ async fn handle_extranonce_subscribe(
     Ok(())
 }
 
+/// Reject an authorize request visibly: send a JSON-RPC error, close the
+/// connection, and return the same message so the listener logs it.
+async fn reject_authorize(
+    ctx: &Arc<StratumContext>,
+    event: &JsonRpcEvent,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let response = JsonRpcResponse::error(event.id.clone(), 20, message, None);
+    let _ = ctx.reply(response).await;
+    ctx.disconnect();
+    Err(message.to_string().into())
+}
+
 /// Handle authorize request
 /// If client_handler and kaspa_api are provided, sends immediate job after authorization
 pub async fn handle_authorize(
@@ -272,7 +285,8 @@ pub async fn handle_authorize(
                 ctx.remote_addr,
                 ctx.remote_port
             );
-            return Err(format!("invalid wallet address '{address}': {e}").into());
+            let message = format!("invalid wallet address '{address}': {e}");
+            return reject_authorize(&ctx, &event, &message).await;
         }
     };
     tracing::debug!("[AUTHORIZE] Cleaned address: '{}'", address);
@@ -329,7 +343,8 @@ pub async fn handle_authorize(
             ctx.remote_addr,
             ctx.remote_port
         );
-        return Err(format!("invalid Kaspa payout address '{raw}'").into());
+        let message = format!("invalid Kaspa payout address '{raw}'");
+        return reject_authorize(&ctx, &event, &message).await;
     }
     let kas_payout_configured = kas_payout.is_some();
     *ctx.kas_payout.lock() = kas_payout;
