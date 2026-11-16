@@ -279,12 +279,7 @@ pub async fn handle_authorize(
             // address error instead.
             let instance_id = client_handler.as_ref().map_or("", |h| h.instance_id());
             crate::prom::record_bad_address(instance_id, &ctx.remote_addr);
-            tracing::warn!(
-                "[AUTHORIZE] rejecting invalid address '{}' from {}:{}: {e}",
-                address,
-                ctx.remote_addr,
-                ctx.remote_port
-            );
+            tracing::warn!("[AUTHORIZE] rejecting invalid address '{}' from {}:{}: {e}", address, ctx.remote_addr, ctx.remote_port);
             let message = format!("invalid wallet address '{address}': {e}");
             return reject_authorize(&ctx, &event, &message).await;
         }
@@ -337,12 +332,7 @@ pub async fn handle_authorize(
     {
         let instance_id = client_handler.as_ref().map_or("", |h| h.instance_id());
         crate::prom::record_bad_address(instance_id, &ctx.remote_addr);
-        tracing::warn!(
-            "[AUTHORIZE] rejecting invalid Kaspa payout address '{}' from {}:{}",
-            raw,
-            ctx.remote_addr,
-            ctx.remote_port
-        );
+        tracing::warn!("[AUTHORIZE] rejecting invalid Kaspa payout address '{}' from {}:{}", raw, ctx.remote_addr, ctx.remote_port);
         let message = format!("invalid Kaspa payout address '{raw}'");
         return reject_authorize(&ctx, &event, &message).await;
     }
