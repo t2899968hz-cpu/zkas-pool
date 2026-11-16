@@ -10,6 +10,25 @@ backward-incompatible ways at every minor bump.
 
 ## [Unreleased]
 
+### Security
+
+- **Invalid payout addresses are rejected, not redirected to the pool.**
+  `mining.authorize` now fails with `err_malformed_wallet_address` when the
+  ZKas address does not decode, and fails when the stratum password carries an
+  explicit `kaspa:`-family prefix that does not decode. Placeholder passwords
+  (`x`, `*`, `d=8192`) still mean "no KAS payout". The previous behavior mined
+  the coinbase to the pool's own address, silently forfeiting the miner's
+  rewards (`bridge/src/default_client.rs`).
+- **Pinned the ZKas dependency source.** All 64 `firecash/zkas-rusty` patch
+  entries now use the audited commit
+  `01ac1865181613073d3b4dda00534f2aeb9471be` instead of the mutable `main`
+  branch; `Cargo.lock` was updated to the matching `rev` source.
+- **Self-hosted the dashboard Tailwind runtime and added CSP.** The operator
+  dashboard no longer loads `https://cdn.tailwindcss.com`; the pinned runtime
+  is vendored at `bridge/static/js/tailwind.js` with a SHA-256 manifest, and
+  `index.html`/`raw.html` enforce `script-src 'self'` plus a narrow
+  `connect-src`/`img-src`/font policy.
+
 ## [0.1.0] - 2026-08-30
 
 First tagged release. The pool has been serving production since 2026-08-24;

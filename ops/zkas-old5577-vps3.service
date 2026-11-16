@@ -11,7 +11,6 @@ Environment=RUST_LOG=info
 Environment=ZKAS_MERGED_MINING=1
 Environment=ZKAS_KASPA_NODE=127.0.0.1:16215
 Environment=ZKAS_KASPA_PAY=kaspa:qz9vu847dscd2d7qfgvl7739r78jz39uun9jagf4p67nx6yf7aqcy0vuag5f8
-Environment=POOL_FALLBACK_ADDRESS=zkas:py82h42m9qjff0knpcmllzq3c7qhurje5auh4tq2ceagf69wjpf23djwwmqr26zhsua8rrglrwdltsh
 ExecStart=/opt/zkas-old5577/stratum-bridge --node-mode external --config /opt/zkas-old5577/config.yaml
 Restart=always
 RestartSec=3

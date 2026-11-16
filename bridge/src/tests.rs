@@ -2639,19 +2639,40 @@ mod comprehensive_tests {
 
     #[tokio::test]
     async fn test_wallet_address_cleaning_invalid_addresses() {
-        // Invalid addresses are accepted using the configured pool fallback.
+        // Invalid addresses are rejected; the pool never mines to its own
+        // address on the miner's behalf.
         let ctx = create_test_context().await;
 
         // Test empty address
         let event1 = JsonRpcEvent::new(Some("1".to_string()), "mining.authorize", vec![json!("")]);
         let result1: Result<(), _> = handle_authorize(ctx.clone(), event1, None, None).await;
-        assert!(result1.is_ok(), "Empty address should use the fallback");
+        let err1 = result1.expect_err("Empty address must be rejected");
+        assert!(err1.to_string().contains("invalid wallet address"), "unexpected error: {err1}");
 
         // Test malformed address
         let ctx2 = create_test_context().await;
         let event2 = JsonRpcEvent::new(Some("2".to_string()), "mining.authorize", vec![json!("invalid_address")]);
         let result2: Result<(), _> = handle_authorize(ctx2.clone(), event2, None, None).await;
-        assert!(result2.is_ok(), "Invalid address should use the fallback");
+        let err2 = result2.expect_err("Invalid address must be rejected");
+        assert!(err2.to_string().contains("invalid wallet address"), "unexpected error: {err2}");
+    }
+
+    #[tokio::test]
+    async fn test_authorize_rejects_malformed_kas_payout_password() {
+        // An explicitly prefixed Kaspa address that does not decode must fail
+        // the authorize instead of silently paying the pool.
+        let ctx = create_test_context().await;
+        let event = JsonRpcEvent::new(
+            Some("1".to_string()),
+            "mining.authorize",
+            vec![
+                json!("zkas:py82h42m9qjff0knpcmllzq3c7qhurje5auh4tq2ceagf69wjpf23djwwmqr26zhsua8rrglrwdltsh"),
+                json!("kaspa:not-a-valid-address"),
+            ],
+        );
+        let result: Result<(), _> = handle_authorize(ctx, event, None, None).await;
+        let err = result.expect_err("Malformed Kaspa payout address must be rejected");
+        assert!(err.to_string().contains("invalid Kaspa payout address"), "unexpected error: {err}");
     }
 
     #[tokio::test]

@@ -550,11 +550,11 @@ impl ClientHandler {
                         // Two different addresses can land here: the miner's ZKas
                         // username, and the Kaspa payout address it supplied in the
                         // stratum password. The node's error text does not say which,
-                        // so decide by what the session actually carries. Dropping a
-                        // miner over its *Kaspa* address would be wrong -- it is
-                        // optional, and a bad one is documented to fall back to the
-                        // pool. Doing so also costs the miner every ZKas reward, and
-                        // it reconnects instantly, so the disconnect becomes a loop.
+                        // so decide by what the session actually carries. Both are
+                        // validated at authorize now, so a decode failure here means
+                        // the node rejected a value Rust accepted (for example an HRP
+                        // for the wrong network). Never redirect a configured miner
+                        // payout to the pool: disconnect so the miner sees the error.
                         let had_kas_payout = client_clone.kas_payout.lock().take().is_some();
                         if had_kas_payout {
                             // The dashboard must stop claiming this worker is paid
@@ -563,15 +563,14 @@ impl ClientHandler {
                                 &crate::prom::worker_context(&instance_id, &client_clone, remote_app.clone()),
                                 false,
                             );
-                            warn!(
-                                "send_immediate_job: Kaspa payout address rejected ({}); \
-                                 falling back to the pool address for {} and continuing",
+                            error!(
+                                "send_immediate_job: configured Kaspa payout address rejected ({}); disconnecting {}",
                                 e, client_clone.remote_addr
                             );
                         } else {
                             error!("send_immediate_job: failed fetching block template, malformed address: {}", e);
-                            client_clone.disconnect();
                         }
+                        client_clone.disconnect();
                     } else {
                         record_worker_error(&instance_id, &wallet_addr, crate::errors::ErrorShortCode::FailedBlockFetch.as_str());
                         error!("send_immediate_job: failed fetching block template: {}", e);

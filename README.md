@@ -205,18 +205,25 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 dual-licensed as above, without any additional terms or conditions.
 
-## Bad payout addresses: the pool's policy, stated plainly
+## Bad payout addresses: rejected at authorize
 
 If your miner authorizes with an address the bridge cannot decode (after trying
-the `zkas:`, `firecash:` and `kaspa:` prefixes), the pool **does not disconnect
-you**. Your worker keeps mining, but the coinbase of any block you find pays the
-**pool's fallback address** — you forfeit those rewards until you fix the
-address. Every such authorization is logged with a warning on the pool side and
-counted in the pool's metrics.
+the `zkas:`, `firecash:` and `kaspa:` prefixes), the authorize request fails
+with `err_malformed_wallet_address`. The worker is not credited and **no
+coinbase is mined to the pool on your behalf**. Fix the payout address in your
+miner configuration and reconnect.
 
-Why not reject the connection? A rejected `authorize` sends most mining firmware
-into an indefinite reconnect storm that helps nobody. Accept-and-flag keeps the
-worker visible so the problem can be noticed and fixed.
+The same rule applies to the optional merged-mining KAS payout in the stratum
+password: a password carrying an explicit `kaspa:`/`kaspatest:`/`kaspadev:`
+prefix must decode, otherwise the authorize is rejected. Conventional
+non-address passwords (`x`, `*`, `(null)`, `d=8192`, `m=solo`) still mean "no
+KAS payout" and leave the lane paying the pool as before.
+
+Why reject instead of redirect? Silently mining to the pool address forfeits
+the miner's rewards without an error, which is indistinguishable from a payout
+bug. A visible authorize failure is the only outcome the miner can act on.
+The rejection is logged and counted in the pool's bad-address metric so
+operators can see it.
 
 **Check yourself:** your address appears on your miner dashboard page; if your
 worker shows hashrate but no balance accrues, re-check the payout address in

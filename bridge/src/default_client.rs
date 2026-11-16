@@ -258,21 +258,21 @@ pub async fn handle_authorize(
     address = match clean_wallet(&address) {
         Ok(a) => a,
         Err(e) => {
-            // ZKas policy: never drop a miner for a malformed address. Accept
-            // it and mine the coinbase to the POOL's own address instead — a miner
-            // that supplies a bad address forfeits its rewards to the pool rather
-            // than being disconnected.
-            let fallback = pool_fallback_address();
+            // Fail closed: a malformed payout address must never silently
+            // redirect the miner's coinbase to the pool. Accepting the worker
+            // and mining to the pool address forfeits rewards without an
+            // explicit error, which is indistinguishable from a payout bug on
+            // the miner side. Reject the authorize so firmware surfaces the
+            // address error instead.
             let instance_id = client_handler.as_ref().map_or("", |h| h.instance_id());
             crate::prom::record_bad_address(instance_id, &ctx.remote_addr);
             tracing::warn!(
-                "[AUTHORIZE] invalid address '{}' from {}:{} ({e}); accepting miner, coinbase -> pool ({})",
+                "[AUTHORIZE] rejecting invalid address '{}' from {}:{}: {e}",
                 address,
                 ctx.remote_addr,
-                ctx.remote_port,
-                fallback
+                ctx.remote_port
             );
-            fallback
+            return Err(format!("invalid wallet address '{address}': {e}").into());
         }
     };
     tracing::debug!("[AUTHORIZE] Cleaned address: '{}'", address);
@@ -305,33 +305,31 @@ pub async fn handle_authorize(
     // second per connection, so bech32-decoding this on the job path would be pure
     // repeated waste for a value that cannot change without a re-authorize.
     //
-    // Same policy the ZKas address above uses: a miner is NEVER dropped for a bad
-    // value. Anything unparseable leaves `kas_payout = None`, which means "pay the
-    // pool" — the miner keeps mining and keeps earning ZKas normally. That is the
-    // forgiving choice, but it is also a silent one: a typo donates this miner's KAS
-    // to the pool indefinitely, so it is logged at WARN with the offending value.
-    let kas_payout = parse_kas_payout(event.params.get(1).and_then(|v| v.as_str()));
-    match &kas_payout {
-        Some(addr) => {
-            tracing::info!(
-                "[AUTHORIZE] {}:{} merged-mining KAS rewards -> {} (from password field)",
-                ctx.remote_addr,
-                ctx.remote_port,
-                addr
-            );
-        }
-        None => {
-            if let Some(raw) = event.params.get(1).and_then(|v| v.as_str())
-                && !is_placeholder_password(raw)
-            {
-                tracing::warn!(
-                    "[AUTHORIZE] {}:{} password '{}' is not a valid kaspa: address; KAS from this lane pays the POOL.                      Set the password to your kaspa: address to be paid directly.",
-                    ctx.remote_addr,
-                    ctx.remote_port,
-                    raw
-                );
-            }
-        }
+    // A precedence-less password (`x`, `d=8192`, ...) still means "no KAS
+    // payout". A password that explicitly carries a Kaspa address prefix must
+    // parse: otherwise reject the authorize rather than silently paying this
+    // miner's merge-mined KAS to the pool.
+    let kas_password = event.params.get(1).and_then(|v| v.as_str());
+    let kas_payout = parse_kas_payout(kas_password);
+    if let Some(addr) = &kas_payout {
+        tracing::info!(
+            "[AUTHORIZE] {}:{} merged-mining KAS rewards -> {} (from password field)",
+            ctx.remote_addr,
+            ctx.remote_port,
+            addr
+        );
+    } else if let Some(raw) = kas_password
+        && !is_placeholder_password(raw)
+    {
+        let instance_id = client_handler.as_ref().map_or("", |h| h.instance_id());
+        crate::prom::record_bad_address(instance_id, &ctx.remote_addr);
+        tracing::warn!(
+            "[AUTHORIZE] rejecting invalid Kaspa payout address '{}' from {}:{}",
+            raw,
+            ctx.remote_addr,
+            ctx.remote_port
+        );
+        return Err(format!("invalid Kaspa payout address '{raw}'").into());
     }
     let kas_payout_configured = kas_payout.is_some();
     *ctx.kas_payout.lock() = kas_payout;
@@ -467,19 +465,10 @@ fn process_canxium_address(address: &str) -> String {
     addr
 }
 
-/// Clean and validate wallet address
-/// The pool's own address, used as the coinbase target when a miner supplies an
-/// unparsable address (see the authorize handler). Configurable via the
-/// POOL_FALLBACK_ADDRESS env var; defaults to the ZKas pool wallet.
-fn pool_fallback_address() -> String {
-    std::env::var("POOL_FALLBACK_ADDRESS")
-        .unwrap_or_else(|_| "zkas:py82h42m9qjff0knpcmllzq3c7qhurje5auh4tq2ceagf69wjpf23djwwmqr26zhsua8rrglrwdltsh".to_string())
-}
-
 /// Passwords miners send when they mean "I have no password".
 ///
 /// Every one of these is a convention, not an address, and treating them as a failed
-/// parse would spam WARN for correctly-configured miners who simply are not opting
+/// parse would reject correctly-configured miners who simply are not opting
 /// into direct KAS payout.
 fn is_placeholder_password(raw: &str) -> bool {
     !looks_like_payout_attempt(raw)
@@ -487,16 +476,17 @@ fn is_placeholder_password(raw: &str) -> bool {
 
 /// Did this miner plausibly TRY to give us a payout address?
 ///
-/// The rule is deliberately inverted: stay silent by default and warn only on a
-/// genuine attempt. Passwords in the wild are overwhelmingly conventions rather than
-/// addresses — measured on this pool within minutes of shipping the feature: `x`,
-/// `*`, `(null)`, `d=8192`, `m=solo`. Warning on "not a valid address" caught every
-/// one of those and buried the warning that actually matters — a real address with a
-/// typo, which silently donates that miner's KAS to the pool forever.
+/// The rule is deliberately inverted: treat unrecognised password text as silence and
+/// reject only a genuine attempt. Passwords in the wild are overwhelmingly conventions
+/// rather than addresses — measured on this pool within minutes of shipping the
+/// feature: `x`, `*`, `(null)`, `d=8192`, `m=solo`. Rejecting on "not a valid address"
+/// would disconnect every one of those and bury the error that actually matters — a
+/// real address with a typo, which otherwise silently donates that miner's KAS to the
+/// pool forever.
 ///
 /// So: an attempt is something carrying an explicit `kaspa`-family prefix. Anything
-/// else is treated as "no opinion", pays the pool exactly as before this feature
-/// existed, and says nothing.
+/// else is treated as "no opinion" and pays the pool exactly as before this feature
+/// existed.
 fn looks_like_payout_attempt(raw: &str) -> bool {
     let t = raw.trim().to_ascii_lowercase();
     t.starts_with("kaspa:") || t.starts_with("kaspatest:") || t.starts_with("kaspadev:")
@@ -506,11 +496,11 @@ fn looks_like_payout_attempt(raw: &str) -> bool {
 ///
 /// Deliberately STRICTER than [`clean_wallet`]: that function coerces a bare payload
 /// into `kaspa:...` and falls back to a regex scrape, which is right for the ZKas
-/// address (where a wrong guess costs the miner nothing — the pool still pays them via
-/// the pool address) and wrong here. This value decides where real KAS is minted. A
-/// coerced guess that happens to decode would silently mint to an address the miner
-/// never chose and cannot spend, so anything that is not already a well-formed,
-/// explicitly-prefixed address is refused and the lane falls back to the pool.
+/// address and wrong here. This value decides where real KAS is minted. A coerced
+/// guess that happens to decode would silently mint to an address the miner never
+/// chose and cannot spend, so anything that is not already a well-formed,
+/// explicitly-prefixed address is refused. The authorize handler rejects an explicit
+/// prefix that does not parse; placeholder passwords simply leave the lane unpaid.
 ///
 /// Some miners send `address:worker` or `address.worker` in the password; the address
 /// is taken as the leading token so those still work.
@@ -532,8 +522,8 @@ fn parse_kas_payout(raw: Option<&str>) -> Option<Address> {
 /// Every path out of here is bech32-validated. This function must never return
 /// a string it has not decoded: it feeds the coinbase, so a "close enough"
 /// answer pays somebody else. When nothing validates it returns `Err`, and the
-/// caller's ZKas policy takes over -- the miner keeps mining and the coinbase
-/// goes to the pool -- rather than the miner being dropped.
+/// authorize handler rejects the connection with an explicit address error
+/// rather than mining to the pool.
 fn clean_wallet(input: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // An already well-formed address of any prefix we accept wins outright.
     if Address::try_from(input).is_ok() {
